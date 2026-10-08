@@ -27,7 +27,7 @@ class SignalChartCard extends StatefulWidget {
 }
 
 class _SignalChartCardState extends State<SignalChartCard> {
-  final GlobalKey _chartKey = GlobalKey();
+  final GlobalKey _captureKey = GlobalKey();
 
   late int _windowStart;
   late int _windowEnd;
@@ -213,9 +213,67 @@ class _SignalChartCardState extends State<SignalChartCard> {
     });
   }
 
+  void _goToMin() {
+    if (widget.signals.isEmpty) return;
+    final values = widget.signals[0].values;
+    if (values.isEmpty) return;
+
+    int minIdx = 0;
+    double minVal = values[0];
+    for (int i = 1; i < values.length; i++) {
+      if (values[i] < minVal) {
+        minVal = values[i];
+        minIdx = i;
+      }
+    }
+
+    setState(() {
+      if (minIdx < _windowStart || minIdx > _windowEnd) {
+        final windowLength = _windowEnd - _windowStart;
+        _windowStart = (minIdx - windowLength ~/ 2).clamp(0, values.length - 1);
+        _windowEnd =
+            (_windowStart + windowLength).clamp(_windowStart + 1, values.length - 1);
+      }
+      if (_activeCursor == 1) {
+        _cursor1Index = minIdx;
+      } else {
+        _cursor2Index = minIdx;
+      }
+    });
+  }
+
+  void _goToMax() {
+    if (widget.signals.isEmpty) return;
+    final values = widget.signals[0].values;
+    if (values.isEmpty) return;
+
+    int maxIdx = 0;
+    double maxVal = values[0];
+    for (int i = 1; i < values.length; i++) {
+      if (values[i] > maxVal) {
+        maxVal = values[i];
+        maxIdx = i;
+      }
+    }
+
+    setState(() {
+      if (maxIdx < _windowStart || maxIdx > _windowEnd) {
+        final windowLength = _windowEnd - _windowStart;
+        _windowStart = (maxIdx - windowLength ~/ 2).clamp(0, values.length - 1);
+        _windowEnd =
+            (_windowStart + windowLength).clamp(_windowStart + 1, values.length - 1);
+      }
+      if (_activeCursor == 1) {
+        _cursor1Index = maxIdx;
+      } else {
+        _cursor2Index = maxIdx;
+      }
+    });
+  }
+
   Future<void> _captureScreenshot() async {
     try {
-      final boundary = _chartKey.currentContext!.findRenderObject()
+      final boundary = _captureKey.currentContext!.findRenderObject()
           as RenderRepaintBoundary;
       final image = await boundary.toImage(pixelRatio: 3.0);
       final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
@@ -323,68 +381,80 @@ class _SignalChartCardState extends State<SignalChartCard> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(widget.title,
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold, fontSize: 14)),
-            const SizedBox(height: 4),
-            Wrap(
-              spacing: 8,
-              runSpacing: 2,
-              children: [
-                for (int i = 0; i < widget.signals.length; i++)
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(width: 10, height: 10, color: _colorFor(i)),
-                      const SizedBox(width: 4),
-                      Builder(builder: (context) {
-                        final mm = _minMaxOf(widget.signals[i]);
-                        return Text(
-                          "${widget.signals[i].name} (min=${mm[0].toStringAsFixed(2)}, max=${mm[1].toStringAsFixed(2)})",
-                          style: const TextStyle(fontSize: 10),
+            RepaintBoundary(
+              key: _captureKey,
+              child: Container(
+                color: Colors.white,
+                padding: const EdgeInsets.all(4.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(widget.title,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 14)),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 2,
+                      children: [
+                        for (int i = 0; i < widget.signals.length; i++)
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                  width: 10, height: 10, color: _colorFor(i)),
+                              const SizedBox(width: 4),
+                              Builder(builder: (context) {
+                                final mm = _minMaxOf(widget.signals[i]);
+                                return Text(
+                                  "${widget.signals[i].name} (min=${mm[0].toStringAsFixed(2)}, max=${mm[1].toStringAsFixed(2)})",
+                                  style: const TextStyle(fontSize: 10),
+                                );
+                              }),
+                            ],
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final width = constraints.maxWidth;
+                        return GestureDetector(
+                          onScaleStart: (d) => _onScaleStart(d, width),
+                          onScaleUpdate: (d) => _onScaleUpdate(d, width),
+                          onScaleEnd: _onScaleEnd,
+                          onTapUp: (d) => _onTapUp(d, width),
+                          child: Container(
+                            height: 260,
+                            color: Colors.white,
+                            child: CustomPaint(
+                              size: Size(width, 260),
+                              painter: _ChartPainter(
+                                signals: widget.signals,
+                                windowStart: _windowStart,
+                                windowEnd: _windowEnd,
+                                periodSeconds: widget.periodSeconds,
+                                cursor1Index: _cursor1Index,
+                                cursor2Index: _twoCursors ? _cursor2Index : null,
+                                colorFor: _colorFor,
+                                cursor1Color: _cursor1Color,
+                                cursor2Color: _cursor2Color,
+                              ),
+                            ),
+                          ),
                         );
-                      }),
-                    ],
-                  ),
-              ],
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    _buildCursorInfo(),
+                  ],
+                ),
+              ),
             ),
             const SizedBox(height: 4),
             const Text(
               "Astuce : maintenez et glissez un curseur pour le déplacer.",
               style: TextStyle(fontSize: 10, color: Colors.grey),
-            ),
-            const SizedBox(height: 8),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final width = constraints.maxWidth;
-                return RepaintBoundary(
-                  key: _chartKey,
-                  child: GestureDetector(
-                    onScaleStart: (d) => _onScaleStart(d, width),
-                    onScaleUpdate: (d) => _onScaleUpdate(d, width),
-                    onScaleEnd: _onScaleEnd,
-                    onTapUp: (d) => _onTapUp(d, width),
-                    child: Container(
-                      height: 260,
-                      color: Colors.white,
-                      child: CustomPaint(
-                        size: Size(width, 260),
-                        painter: _ChartPainter(
-                          signals: widget.signals,
-                          windowStart: _windowStart,
-                          windowEnd: _windowEnd,
-                          periodSeconds: widget.periodSeconds,
-                          cursor1Index: _cursor1Index,
-                          cursor2Index: _twoCursors ? _cursor2Index : null,
-                          colorFor: _colorFor,
-                          cursor1Color: _cursor1Color,
-                          cursor2Color: _cursor2Color,
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              },
             ),
             const SizedBox(height: 8),
             Wrap(
@@ -426,6 +496,16 @@ class _SignalChartCardState extends State<SignalChartCard> {
                     ),
                   ],
                 ),
+                OutlinedButton.icon(
+                  onPressed: _goToMin,
+                  icon: const Icon(Icons.arrow_downward, size: 16),
+                  label: const Text("Min"),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _goToMax,
+                  icon: const Icon(Icons.arrow_upward, size: 16),
+                  label: const Text("Max"),
+                ),
                 IconButton(
                   onPressed: _resetZoom,
                   icon: const Icon(Icons.zoom_out_map),
@@ -453,8 +533,6 @@ class _SignalChartCardState extends State<SignalChartCard> {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            _buildCursorInfo(),
           ],
         ),
       ),
@@ -493,11 +571,21 @@ class _SignalChartCardState extends State<SignalChartCard> {
       }
 
       rows.add(const SizedBox(height: 8));
-      rows.add(Text("ΔT = ${(t2 - t1).toStringAsFixed(4)} s",
+      final deltaT = t2 - t1;
+      rows.add(Text("ΔT = ${deltaT.toStringAsFixed(4)} s",
           style: const TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.bold,
               color: Colors.deepPurple)));
+
+      if (deltaT != 0) {
+        final freq = 1.0 / deltaT.abs();
+        rows.add(Text("Fréquence correspondante : ${freq.toStringAsFixed(4)} Hz",
+            style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.deepPurple)));
+      }
 
       if (widget.signals.length == 1) {
         final v1 = widget.signals[0].values[_cursor1Index!];
