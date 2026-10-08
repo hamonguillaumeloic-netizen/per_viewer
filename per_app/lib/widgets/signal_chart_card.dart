@@ -42,6 +42,12 @@ class _SignalChartCardState extends State<SignalChartCard> {
   int? _draggingCursorNumber;
   static const double _cursorHitTolerance = 24.0;
 
+  bool _manualYRange = false;
+  double? _yMin;
+  double? _yMax;
+  final TextEditingController _yMinController = TextEditingController();
+  final TextEditingController _yMaxController = TextEditingController();
+
   static const List<Color> _palette = [
     Colors.blue,
     Colors.red,
@@ -68,6 +74,13 @@ class _SignalChartCardState extends State<SignalChartCard> {
     super.initState();
     _windowStart = 0;
     _windowEnd = _totalPoints > 1 ? _totalPoints - 1 : 1;
+  }
+
+  @override
+  void dispose() {
+    _yMinController.dispose();
+    _yMaxController.dispose();
+    super.dispose();
   }
 
   Color _colorFor(int index) => _palette[index % _palette.length];
@@ -271,6 +284,108 @@ class _SignalChartCardState extends State<SignalChartCard> {
     });
   }
 
+  void _applyManualYRange() {
+    final minVal = double.tryParse(_yMinController.text.trim());
+    final maxVal = double.tryParse(_yMaxController.text.trim());
+
+    if (minVal == null || maxVal == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Veuillez saisir des valeurs numériques valides.")),
+      );
+      return;
+    }
+    if (minVal >= maxVal) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("La valeur min doit être inférieure à la valeur max.")),
+      );
+      return;
+    }
+
+    setState(() {
+      _yMin = minVal;
+      _yMax = maxVal;
+    });
+  }
+
+  void _openYRangeDialog() {
+    _yMinController.text = _yMin?.toString() ?? '';
+    _yMaxController.text = _yMax?.toString() ?? '';
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text("Plage de l'axe Y"),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Text("Automatique"),
+                      Switch(
+                        value: _manualYRange,
+                        onChanged: (v) {
+                          setDialogState(() => _manualYRange = v);
+                          setState(() => _manualYRange = v);
+                        },
+                      ),
+                      const Text("Manuel"),
+                    ],
+                  ),
+                  if (_manualYRange) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _yMinController,
+                      keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true, signed: true),
+                      decoration: const InputDecoration(
+                        labelText: "Valeur minimale",
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _yMaxController,
+                      keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true, signed: true),
+                      decoration: const InputDecoration(
+                        labelText: "Valeur maximale",
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text("Annuler"),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    if (_manualYRange) {
+                      _applyManualYRange();
+                    } else {
+                      setState(() {
+                        _yMin = null;
+                        _yMax = null;
+                      });
+                    }
+                    Navigator.pop(context);
+                  },
+                  child: const Text("Appliquer"),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   Future<void> _captureScreenshot() async {
     try {
       final boundary = _captureKey.currentContext!.findRenderObject()
@@ -439,6 +554,8 @@ class _SignalChartCardState extends State<SignalChartCard> {
                                 colorFor: _colorFor,
                                 cursor1Color: _cursor1Color,
                                 cursor2Color: _cursor2Color,
+                                manualYMin: _manualYRange ? _yMin : null,
+                                manualYMax: _manualYRange ? _yMax : null,
                               ),
                             ),
                           ),
@@ -510,6 +627,14 @@ class _SignalChartCardState extends State<SignalChartCard> {
                   onPressed: _resetZoom,
                   icon: const Icon(Icons.zoom_out_map),
                   tooltip: "Réinitialiser le zoom",
+                ),
+                IconButton(
+                  onPressed: _openYRangeDialog,
+                  icon: Icon(
+                    Icons.height,
+                    color: _manualYRange ? Colors.deepPurple : null,
+                  ),
+                  tooltip: "Plage de l'axe Y",
                 ),
                 IconButton(
                   onPressed: _captureScreenshot,
@@ -624,6 +749,8 @@ class _ChartPainter extends CustomPainter {
   final Color Function(int) colorFor;
   final Color cursor1Color;
   final Color cursor2Color;
+  final double? manualYMin;
+  final double? manualYMax;
 
   _ChartPainter({
     required this.signals,
@@ -635,6 +762,8 @@ class _ChartPainter extends CustomPainter {
     required this.colorFor,
     required this.cursor1Color,
     required this.cursor2Color,
+    this.manualYMin,
+    this.manualYMax,
   });
 
   static const double leftMargin = 50.0;
@@ -656,10 +785,16 @@ class _ChartPainter extends CustomPainter {
 
     final windowLength = (windowEnd - windowStart).clamp(1, 1 << 30);
 
+    final bool useManualRange = manualYMin != null && manualYMax != null;
     final bool singleSignal = signals.length == 1;
+
     double refMin = 0;
     double refMax = 1;
-    if (singleSignal) {
+
+    if (useManualRange) {
+      refMin = manualYMin!;
+      refMax = manualYMax!;
+    } else if (singleSignal) {
       refMin = double.infinity;
       refMax = -double.infinity;
       final values = signals[0].values;
@@ -683,7 +818,7 @@ class _ChartPainter extends CustomPainter {
           Offset(leftMargin, y), Offset(leftMargin + plotWidth, y), gridPaint);
 
       String label;
-      if (singleSignal) {
+      if (useManualRange || singleSignal) {
         final v = refMax - (refMax - refMin) * i / 4;
         label = v.toStringAsFixed(2);
       } else {
@@ -721,25 +856,33 @@ class _ChartPainter extends CustomPainter {
     for (int s = 0; s < signals.length; s++) {
       final values = signals[s].values;
 
-      double minV = double.infinity;
-      double maxV = -double.infinity;
-      for (int i = windowStart; i <= windowEnd && i < values.length; i++) {
-        final v = values[i];
-        if (v < minV) minV = v;
-        if (v > maxV) maxV = v;
+      double minV;
+      double maxV;
+
+      if (useManualRange) {
+        minV = manualYMin!;
+        maxV = manualYMax!;
+      } else {
+        minV = double.infinity;
+        maxV = -double.infinity;
+        for (int i = windowStart; i <= windowEnd && i < values.length; i++) {
+          final v = values[i];
+          if (v < minV) minV = v;
+          if (v > maxV) maxV = v;
+        }
+        if (minV == maxV) {
+          minV -= 1;
+          maxV += 1;
+        }
+        if (!minV.isFinite || !maxV.isFinite) continue;
       }
-      if (minV == maxV) {
-        minV -= 1;
-        maxV += 1;
-      }
-      if (!minV.isFinite || !maxV.isFinite) continue;
 
       final path = Path();
       bool first = true;
 
       for (int i = windowStart; i <= windowEnd && i < values.length; i++) {
         final x = leftMargin + (i - windowStart) / windowLength * plotWidth;
-        final normalized = (values[i] - minV) / (maxV - minV);
+        final normalized = ((values[i] - minV) / (maxV - minV)).clamp(-0.5, 1.5);
         final y = topMargin + plotHeight - (normalized * plotHeight);
 
         if (first) {
@@ -791,6 +934,8 @@ class _ChartPainter extends CustomPainter {
     return oldDelegate.windowStart != windowStart ||
         oldDelegate.windowEnd != windowEnd ||
         oldDelegate.cursor1Index != cursor1Index ||
-        oldDelegate.cursor2Index != cursor2Index;
+        oldDelegate.cursor2Index != cursor2Index ||
+        oldDelegate.manualYMin != manualYMin ||
+        oldDelegate.manualYMax != manualYMax;
   }
 }
