@@ -28,10 +28,12 @@ class ChartScreen extends StatelessWidget {
         ],
       ),
       body: sameChart
-          ? SignalChartCard(
-              signals: signals,
-              periodSeconds: periodSeconds,
-              title: "Signaux combinés",
+          ? SingleChildScrollView(
+              child: SignalChartCard(
+                signals: signals,
+                periodSeconds: periodSeconds,
+                title: "Signaux combinés",
+              ),
             )
           : ListView.builder(
               itemCount: signals.length,
