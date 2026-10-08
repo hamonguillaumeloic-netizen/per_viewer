@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'per_parser/per_file_parser.dart';
 import 'screens/signal_selection_screen.dart';
@@ -28,8 +29,65 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  static const _channel = MethodChannel('per_viewer/open_file');
+
   bool _loading = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _setupChannel();
+    _checkInitialFile();
+  }
+
+  void _setupChannel() {
+    _channel.setMethodCallHandler((call) async {
+      if (call.method == 'onFileOpened') {
+        final filePath = call.arguments as String?;
+        if (filePath != null) {
+          _parseAndNavigate(filePath);
+        }
+      }
+    });
+  }
+
+  Future<void> _checkInitialFile() async {
+    try {
+      final filePath =
+          await _channel.invokeMethod<String>('getInitialFile');
+      if (filePath != null) {
+        _parseAndNavigate(filePath);
+      }
+    } catch (_) {
+      // Pas de fichier initial, comportement normal.
+    }
+  }
+
+  Future<void> _parseAndNavigate(String filePath) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final perFile = await PerFileParser.parseFile(filePath);
+      setState(() => _loading = false);
+
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => SignalSelectionScreen(perFile: perFile),
+        ),
+      );
+    } catch (e) {
+      setState(() {
+        _loading = false;
+        _error = e.toString();
+      });
+    }
+  }
 
   Future<void> _pickAndParse() async {
     setState(() {
@@ -46,17 +104,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       final filePath = result.files.single.path!;
-      final perFile = await PerFileParser.parseFile(filePath);
-
-      setState(() => _loading = false);
-
-      if (!mounted) return;
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => SignalSelectionScreen(perFile: perFile),
-        ),
-      );
+      await _parseAndNavigate(filePath);
     } catch (e) {
       setState(() {
         _loading = false;
