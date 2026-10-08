@@ -11,94 +11,120 @@ class VirtualSignalScreen extends StatefulWidget {
   State<VirtualSignalScreen> createState() => _VirtualSignalScreenState();
 }
 
+enum _VirtualMode { signalsOp, signalConstantOp, unaryFunction }
+
 class _VirtualSignalScreenState extends State<VirtualSignalScreen> {
-  bool _isBinary = true;
+  _VirtualMode _mode = _VirtualMode.signalsOp;
   final Set<String> _selectedNames = {};
   String _binaryOp = '+';
   String _unaryOp = 'sin';
   final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _constantController =
+      TextEditingController(text: "1.0");
 
   final List<String> _binaryOps = ['+', '-', '*', '/'];
   final List<String> _unaryOps = ['sin', 'cos', 'tan'];
+
+  double _applyOp(double a, double b, String op) {
+    switch (op) {
+      case '+':
+        return a + b;
+      case '-':
+        return a - b;
+      case '*':
+        return a * b;
+      case '/':
+        return b == 0 ? 0 : a / b;
+      default:
+        return a;
+    }
+  }
 
   void _create() {
     final chosen = widget.availableSignals
         .where((s) => _selectedNames.contains(s.name))
         .toList();
 
-    if (_isBinary) {
-      if (chosen.length < 2) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text("Sélectionnez au moins 2 signaux pour une opération binaire.")),
-        );
-        return;
-      }
-    } else {
-      if (chosen.length != 1) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text("Sélectionnez exactement 1 signal pour une fonction unaire.")),
-        );
-        return;
-      }
-    }
+    List<double> values;
+    String name;
 
-    final n = chosen.map((s) => s.values.length).reduce((a, b) => a < b ? a : b);
-    final values = List<double>.filled(n, 0.0);
+    switch (_mode) {
+      case _VirtualMode.signalsOp:
+        if (chosen.length < 2) {
+          _showError(
+              "Sélectionnez au moins 2 signaux pour une opération entre signaux.");
+          return;
+        }
+        final n = chosen
+            .map((s) => s.values.length)
+            .reduce((a, b) => a < b ? a : b);
+        values = List<double>.filled(n, 0.0);
+        for (int i = 0; i < n; i++) {
+          double acc = chosen[0].values[i];
+          for (int s = 1; s < chosen.length; s++) {
+            acc = _applyOp(acc, chosen[s].values[i], _binaryOp);
+          }
+          values[i] = acc;
+        }
+        name = _nameController.text.trim().isEmpty
+            ? chosen.map((s) => s.name).join("_${_binaryOp}_")
+            : _nameController.text.trim();
+        break;
 
-    if (_isBinary) {
-      for (int i = 0; i < n; i++) {
-        double acc = chosen[0].values[i];
-        for (int s = 1; s < chosen.length; s++) {
-          final b = chosen[s].values[i];
-          switch (_binaryOp) {
-            case '+':
-              acc = acc + b;
+      case _VirtualMode.signalConstantOp:
+        if (chosen.length != 1) {
+          _showError("Sélectionnez exactement 1 signal.");
+          return;
+        }
+        final constant = double.tryParse(_constantController.text.trim());
+        if (constant == null) {
+          _showError("La valeur constante doit être un nombre valide.");
+          return;
+        }
+        final sig = chosen[0];
+        values = List<double>.filled(sig.values.length, 0.0);
+        for (int i = 0; i < sig.values.length; i++) {
+          values[i] = _applyOp(sig.values[i], constant, _binaryOp);
+        }
+        name = _nameController.text.trim().isEmpty
+            ? "${sig.name}_${_binaryOp}_${constant.toString()}"
+            : _nameController.text.trim();
+        break;
+
+      case _VirtualMode.unaryFunction:
+        if (chosen.length != 1) {
+          _showError("Sélectionnez exactement 1 signal.");
+          return;
+        }
+        final sig = chosen[0];
+        values = List<double>.filled(sig.values.length, 0.0);
+        for (int i = 0; i < sig.values.length; i++) {
+          final a = sig.values[i];
+          switch (_unaryOp) {
+            case 'sin':
+              values[i] = math.sin(a);
               break;
-            case '-':
-              acc = acc - b;
+            case 'cos':
+              values[i] = math.cos(a);
               break;
-            case '*':
-              acc = acc * b;
-              break;
-            case '/':
-              acc = b == 0 ? 0 : acc / b;
+            case 'tan':
+              values[i] = math.tan(a);
               break;
           }
         }
-        values[i] = acc;
-      }
-    } else {
-      for (int i = 0; i < n; i++) {
-        final a = chosen[0].values[i];
-        switch (_unaryOp) {
-          case 'sin':
-            values[i] = math.sin(a);
-            break;
-          case 'cos':
-            values[i] = math.cos(a);
-            break;
-          case 'tan':
-            values[i] = math.tan(a);
-            break;
-        }
-      }
+        name = _nameController.text.trim().isEmpty
+            ? "${_unaryOp}_${sig.name}"
+            : _nameController.text.trim();
+        break;
     }
-
-    final name = _nameController.text.trim().isEmpty
-        ? _generateDefaultName(chosen)
-        : _nameController.text.trim();
 
     Navigator.pop(context, PerSignal(name, values));
   }
 
-  String _generateDefaultName(List<PerSignal> chosen) {
-    if (_isBinary) {
-      return chosen.map((s) => s.name).join("_${_binaryOp}_");
-    } else {
-      return "${_unaryOp}_${chosen[0].name}";
-    }
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   @override
@@ -110,19 +136,27 @@ class _VirtualSignalScreenState extends State<VirtualSignalScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            SegmentedButton<bool>(
+            SegmentedButton<_VirtualMode>(
               segments: const [
-                ButtonSegment(value: true, label: Text("Opération (+ - * /)")),
-                ButtonSegment(value: false, label: Text("Fonction (sin/cos/tan)")),
+                ButtonSegment(
+                    value: _VirtualMode.signalsOp,
+                    label: Text("Signal(aux)", style: TextStyle(fontSize: 11))),
+                ButtonSegment(
+                    value: _VirtualMode.signalConstantOp,
+                    label: Text("+ Constante", style: TextStyle(fontSize: 11))),
+                ButtonSegment(
+                    value: _VirtualMode.unaryFunction,
+                    label: Text("sin/cos/tan", style: TextStyle(fontSize: 11))),
               ],
-              selected: {_isBinary},
+              selected: {_mode},
               onSelectionChanged: (s) => setState(() {
-                _isBinary = s.first;
+                _mode = s.first;
                 _selectedNames.clear();
               }),
             ),
             const SizedBox(height: 16),
-            if (_isBinary)
+            if (_mode == _VirtualMode.signalsOp ||
+                _mode == _VirtualMode.signalConstantOp)
               DropdownButtonFormField<String>(
                 decoration: const InputDecoration(labelText: "Opérateur"),
                 items: _binaryOps
@@ -130,8 +164,8 @@ class _VirtualSignalScreenState extends State<VirtualSignalScreen> {
                     .toList(),
                 onChanged: (v) => setState(() => _binaryOp = v!),
                 value: _binaryOp,
-              )
-            else
+              ),
+            if (_mode == _VirtualMode.unaryFunction)
               DropdownButtonFormField<String>(
                 decoration: const InputDecoration(labelText: "Fonction"),
                 items: _unaryOps
@@ -140,9 +174,21 @@ class _VirtualSignalScreenState extends State<VirtualSignalScreen> {
                 onChanged: (v) => setState(() => _unaryOp = v!),
                 value: _unaryOp,
               ),
+            if (_mode == _VirtualMode.signalConstantOp) ...[
+              const SizedBox(height: 16),
+              TextField(
+                controller: _constantController,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true, signed: true),
+                decoration: const InputDecoration(
+                  labelText: "Valeur constante",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
-            Text(_isBinary
-                ? "Sélectionnez les signaux (au moins 2, l'opération s'applique dans l'ordre choisi) :"
+            Text(_mode == _VirtualMode.signalsOp
+                ? "Sélectionnez les signaux (au moins 2) :"
                 : "Sélectionnez 1 signal :"),
             const SizedBox(height: 8),
             Expanded(
@@ -158,7 +204,9 @@ class _VirtualSignalScreenState extends State<VirtualSignalScreen> {
                     onChanged: (checked) {
                       setState(() {
                         if (checked == true) {
-                          if (!_isBinary) _selectedNames.clear();
+                          if (_mode != _VirtualMode.signalsOp) {
+                            _selectedNames.clear();
+                          }
                           _selectedNames.add(sig.name);
                         } else {
                           _selectedNames.remove(sig.name);
