@@ -7,6 +7,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../per_parser/per_file_parser.dart';
 import '../screens/fft_screen.dart';
+import '../screens/approximation_screen.dart';
+import '../screens/flicker_screen.dart';
 
 class SignalChartCard extends StatefulWidget {
   final List<PerSignal> signals;
@@ -37,6 +39,9 @@ class _SignalChartCardState extends State<SignalChartCard> {
   bool _twoCursors = false;
   int _activeCursor = 1;
 
+  int? _draggingCursorNumber;
+  static const double _cursorHitTolerance = 24.0;
+
   static const List<Color> _palette = [
     Colors.blue,
     Colors.red,
@@ -53,7 +58,7 @@ class _SignalChartCardState extends State<SignalChartCard> {
   static const Color _cursor1Color = Colors.black;
   static const Color _cursor2Color = Colors.deepOrange;
   static const double _leftMargin = 50.0;
-  static const double _bottomMargin = 20.0;
+  static const double _rightMargin = 6.0;
 
   int get _totalPoints =>
       widget.signals.isEmpty ? 0 : widget.signals.first.values.length;
@@ -74,19 +79,81 @@ class _SignalChartCardState extends State<SignalChartCard> {
     });
   }
 
+  double _plotWidth(double width) => width - _leftMargin - _rightMargin;
+
+  double? _cursorPixelX(int? idx, double width) {
+    if (idx == null) return null;
+    final windowLength = (_windowEnd - _windowStart).clamp(1, 1 << 30);
+    if (idx < _windowStart || idx > _windowEnd) return null;
+    final plotWidth = _plotWidth(width);
+    return _leftMargin + (idx - _windowStart) / windowLength * plotWidth;
+  }
+
+  int _indexFromPixelX(double localX, double width) {
+    final total = _totalPoints;
+    final plotWidth = _plotWidth(width);
+    final fraction = ((localX - _leftMargin) / plotWidth).clamp(0.0, 1.0);
+    return (_windowStart + fraction * (_windowEnd - _windowStart))
+        .round()
+        .clamp(0, total - 1);
+  }
+
   void _onScaleStart(ScaleStartDetails details, double width) {
+    final touchX = details.localFocalPoint.dx;
+
+    final c1x = _cursorPixelX(_cursor1Index, width);
+    final c2x = _twoCursors ? _cursorPixelX(_cursor2Index, width) : null;
+
+    double? bestDist;
+    int? bestCursor;
+
+    if (c1x != null) {
+      final d = (c1x - touchX).abs();
+      if (d <= _cursorHitTolerance) {
+        bestDist = d;
+        bestCursor = 1;
+      }
+    }
+    if (c2x != null) {
+      final d = (c2x - touchX).abs();
+      if (bestDist == null || d < bestDist) {
+        if (d <= _cursorHitTolerance) {
+          bestCursor = 2;
+        }
+      }
+    }
+
+    if (bestCursor != null) {
+      _draggingCursorNumber = bestCursor;
+      return;
+    }
+
+    _draggingCursorNumber = null;
     _scaleBaseWidth = (_windowEnd - _windowStart).toDouble();
-    final plotWidth = width - _leftMargin - 6;
+    final plotWidth = _plotWidth(width);
     _scaleBaseFocalFraction =
-        ((details.localFocalPoint.dx - _leftMargin) / plotWidth)
-            .clamp(0.0, 1.0);
+        ((touchX - _leftMargin) / plotWidth).clamp(0.0, 1.0);
   }
 
   void _onScaleUpdate(ScaleUpdateDetails details, double width) {
+    if (_draggingCursorNumber != null && details.pointerCount == 1) {
+      final idx = _indexFromPixelX(details.localFocalPoint.dx, width);
+      setState(() {
+        if (_draggingCursorNumber == 1) {
+          _cursor1Index = idx;
+        } else {
+          _cursor2Index = idx;
+        }
+      });
+      return;
+    }
+
+    if (_draggingCursorNumber != null) return;
+
     if (_scaleBaseWidth == null) return;
     final total = _totalPoints;
     if (total < 4) return;
-    final plotWidth = width - _leftMargin - 6;
+    final plotWidth = _plotWidth(width);
 
     double newWidth = _scaleBaseWidth! / details.scale;
     newWidth = newWidth.clamp(4.0, total.toDouble());
@@ -129,16 +196,14 @@ class _SignalChartCardState extends State<SignalChartCard> {
     });
   }
 
-  void _onTapUp(TapUpDetails details, double width) {
-    final total = _totalPoints;
-    if (total == 0) return;
-    final plotWidth = width - _leftMargin - 6;
-    final localX = details.localPosition.dx - _leftMargin;
-    final fraction = (localX / plotWidth).clamp(0.0, 1.0);
-    final idx = (_windowStart + fraction * (_windowEnd - _windowStart))
-        .round()
-        .clamp(0, total - 1);
+  void _onScaleEnd(ScaleEndDetails details) {
+    _draggingCursorNumber = null;
+    _scaleBaseWidth = null;
+    _scaleBaseFocalFraction = null;
+  }
 
+  void _onTapUp(TapUpDetails details, double width) {
+    final idx = _indexFromPixelX(details.localPosition.dx, width);
     setState(() {
       if (_activeCursor == 1) {
         _cursor1Index = idx;
@@ -183,6 +248,50 @@ class _SignalChartCardState extends State<SignalChartCard> {
       MaterialPageRoute(
         builder: (context) => FFTScreen(
           signals: widget.signals,
+          periodSeconds: widget.periodSeconds,
+          windowStart: _windowStart,
+          windowEnd: _windowEnd,
+        ),
+      ),
+    );
+  }
+
+  void _openApproximation() {
+    if (widget.signals.length != 1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                "L'approximation ne fonctionne que sur 1 seul signal à la fois.")),
+      );
+      return;
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ApproximationScreen(
+          signal: widget.signals[0],
+          periodSeconds: widget.periodSeconds,
+          windowStart: _windowStart,
+          windowEnd: _windowEnd,
+        ),
+      ),
+    );
+  }
+
+  void _openFlicker() {
+    if (widget.signals.length != 1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content:
+                Text("Le flicker ne fonctionne que sur 1 seul signal à la fois.")),
+      );
+      return;
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => FlickerScreen(
+          signal: widget.signals[0],
           periodSeconds: widget.periodSeconds,
           windowStart: _windowStart,
           windowEnd: _windowEnd,
@@ -239,6 +348,11 @@ class _SignalChartCardState extends State<SignalChartCard> {
                   ),
               ],
             ),
+            const SizedBox(height: 4),
+            const Text(
+              "Astuce : maintenez et glissez un curseur pour le déplacer.",
+              style: TextStyle(fontSize: 10, color: Colors.grey),
+            ),
             const SizedBox(height: 8),
             LayoutBuilder(
               builder: (context, constraints) {
@@ -248,6 +362,7 @@ class _SignalChartCardState extends State<SignalChartCard> {
                   child: GestureDetector(
                     onScaleStart: (d) => _onScaleStart(d, width),
                     onScaleUpdate: (d) => _onScaleUpdate(d, width),
+                    onScaleEnd: _onScaleEnd,
                     onTapUp: (d) => _onTapUp(d, width),
                     child: Container(
                       height: 260,
@@ -326,6 +441,16 @@ class _SignalChartCardState extends State<SignalChartCard> {
                   icon: const Icon(Icons.graphic_eq),
                   tooltip: "Calculer la FFT",
                 ),
+                IconButton(
+                  onPressed: _openApproximation,
+                  icon: const Icon(Icons.trending_up),
+                  tooltip: "Approximation (affine/polynomiale)",
+                ),
+                IconButton(
+                  onPressed: _openFlicker,
+                  icon: const Icon(Icons.flash_on),
+                  tooltip: "Flicker instantané (approximatif)",
+                ),
               ],
             ),
             const SizedBox(height: 8),
@@ -356,7 +481,7 @@ class _SignalChartCardState extends State<SignalChartCard> {
 
     if (_cursor2Index != null) {
       final t2 = _cursor2Index! * widget.periodSeconds;
-      rows.add(const SizedBox(height: 4));
+      rows.add(const SizedBox(height: 6));
       rows.add(Text("Curseur 2 (orange) : t = ${t2.toStringAsFixed(4)} s",
           style:
               const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)));
@@ -367,18 +492,32 @@ class _SignalChartCardState extends State<SignalChartCard> {
             style: TextStyle(fontSize: 11, color: _colorFor(i))));
       }
 
-      rows.add(const SizedBox(height: 4));
+      rows.add(const SizedBox(height: 8));
       rows.add(Text("ΔT = ${(t2 - t1).toStringAsFixed(4)} s",
           style: const TextStyle(
-              fontSize: 12,
+              fontSize: 13,
               fontWeight: FontWeight.bold,
               color: Colors.deepPurple)));
-      for (int i = 0; i < widget.signals.length; i++) {
-        final v1 = widget.signals[i].values[_cursor1Index!];
-        final v2 = widget.signals[i].values[_cursor2Index!];
-        rows.add(Text(
-            "  Δ ${widget.signals[i].name} : ${(v2 - v1).toStringAsFixed(4)}",
-            style: TextStyle(fontSize: 11, color: _colorFor(i))));
+
+      if (widget.signals.length == 1) {
+        final v1 = widget.signals[0].values[_cursor1Index!];
+        final v2 = widget.signals[0].values[_cursor2Index!];
+        rows.add(Text("ΔY = ${(v2 - v1).toStringAsFixed(4)}",
+            style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: Colors.deepPurple)));
+      } else {
+        for (int i = 0; i < widget.signals.length; i++) {
+          final v1 = widget.signals[i].values[_cursor1Index!];
+          final v2 = widget.signals[i].values[_cursor2Index!];
+          rows.add(Text(
+              "  ΔY ${widget.signals[i].name} : ${(v2 - v1).toStringAsFixed(4)}",
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: _colorFor(i))));
+        }
       }
     }
 
@@ -550,6 +689,9 @@ class _ChartPainter extends CustomPainter {
         ..strokeWidth = 2;
       canvas.drawLine(Offset(x, topMargin),
           Offset(x, topMargin + plotHeight), cursorPaint);
+
+      final handlePaint = Paint()..color = color;
+      canvas.drawCircle(Offset(x, topMargin + 6), 5, handlePaint);
     }
 
     drawCursor(cursor1Index, cursor1Color);

@@ -3,6 +3,7 @@ import '../per_parser/per_file_parser.dart';
 import 'chart_screen.dart';
 import 'virtual_signal_screen.dart';
 import 'xy_screen.dart';
+import 'resample_screen.dart';
 
 class SignalSelectionScreen extends StatefulWidget {
   final PerFile perFile;
@@ -30,9 +31,19 @@ class _SignalSelectionScreenState extends State<SignalSelectionScreen> {
       ),
     );
     if (result != null) {
-      setState(() {
-        _virtualSignals.add(result);
-      });
+      setState(() => _virtualSignals.add(result));
+    }
+  }
+
+  Future<void> _openResample() async {
+    final result = await Navigator.push<PerSignal>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ResampleScreen(availableSignals: _allSignals),
+      ),
+    );
+    if (result != null) {
+      setState(() => _virtualSignals.add(result));
     }
   }
 
@@ -70,6 +81,11 @@ class _SignalSelectionScreenState extends State<SignalSelectionScreen> {
             onPressed: _openVirtualSignalCreator,
             icon: const Icon(Icons.functions),
             tooltip: "Créer un signal virtuel",
+          ),
+          IconButton(
+            onPressed: _openResample,
+            icon: const Icon(Icons.timeline),
+            tooltip: "Resampling (interpolation)",
           ),
           IconButton(
             onPressed: _openXYMode,

@@ -13,8 +13,7 @@ class VirtualSignalScreen extends StatefulWidget {
 
 class _VirtualSignalScreenState extends State<VirtualSignalScreen> {
   bool _isBinary = true;
-  PerSignal? _signalA;
-  PerSignal? _signalB;
+  final Set<String> _selectedNames = {};
   String _binaryOp = '+';
   String _unaryOp = 'sin';
   final TextEditingController _nameController = TextEditingController();
@@ -23,53 +22,56 @@ class _VirtualSignalScreenState extends State<VirtualSignalScreen> {
   final List<String> _unaryOps = ['sin', 'cos', 'tan'];
 
   void _create() {
-    if (_signalA == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Veuillez choisir le signal A.")),
-      );
-      return;
+    final chosen = widget.availableSignals
+        .where((s) => _selectedNames.contains(s.name))
+        .toList();
+
+    if (_isBinary) {
+      if (chosen.length < 2) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text("Sélectionnez au moins 2 signaux pour une opération binaire.")),
+        );
+        return;
+      }
+    } else {
+      if (chosen.length != 1) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text("Sélectionnez exactement 1 signal pour une fonction unaire.")),
+        );
+        return;
+      }
     }
-    if (_isBinary && _signalB == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Veuillez choisir le signal B.")),
-      );
-      return;
-    }
 
-    final name = _nameController.text.trim().isEmpty
-        ? _generateDefaultName()
-        : _nameController.text.trim();
-
-    final n = _isBinary
-        ? (_signalA!.values.length < _signalB!.values.length
-            ? _signalA!.values.length
-            : _signalB!.values.length)
-        : _signalA!.values.length;
-
+    final n = chosen.map((s) => s.values.length).reduce((a, b) => a < b ? a : b);
     final values = List<double>.filled(n, 0.0);
 
     if (_isBinary) {
       for (int i = 0; i < n; i++) {
-        final a = _signalA!.values[i];
-        final b = _signalB!.values[i];
-        switch (_binaryOp) {
-          case '+':
-            values[i] = a + b;
-            break;
-          case '-':
-            values[i] = a - b;
-            break;
-          case '*':
-            values[i] = a * b;
-            break;
-          case '/':
-            values[i] = b == 0 ? 0 : a / b;
-            break;
+        double acc = chosen[0].values[i];
+        for (int s = 1; s < chosen.length; s++) {
+          final b = chosen[s].values[i];
+          switch (_binaryOp) {
+            case '+':
+              acc = acc + b;
+              break;
+            case '-':
+              acc = acc - b;
+              break;
+            case '*':
+              acc = acc * b;
+              break;
+            case '/':
+              acc = b == 0 ? 0 : acc / b;
+              break;
+          }
         }
+        values[i] = acc;
       }
     } else {
       for (int i = 0; i < n; i++) {
-        final a = _signalA!.values[i];
+        final a = chosen[0].values[i];
         switch (_unaryOp) {
           case 'sin':
             values[i] = math.sin(a);
@@ -84,14 +86,18 @@ class _VirtualSignalScreenState extends State<VirtualSignalScreen> {
       }
     }
 
+    final name = _nameController.text.trim().isEmpty
+        ? _generateDefaultName(chosen)
+        : _nameController.text.trim();
+
     Navigator.pop(context, PerSignal(name, values));
   }
 
-  String _generateDefaultName() {
+  String _generateDefaultName(List<PerSignal> chosen) {
     if (_isBinary) {
-      return "${_signalA!.name}_${_binaryOp}_${_signalB!.name}";
+      return chosen.map((s) => s.name).join("_${_binaryOp}_");
     } else {
-      return "${_unaryOp}_${_signalA!.name}";
+      return "${_unaryOp}_${chosen[0].name}";
     }
   }
 
@@ -106,23 +112,17 @@ class _VirtualSignalScreenState extends State<VirtualSignalScreen> {
           children: [
             SegmentedButton<bool>(
               segments: const [
-                ButtonSegment(value: true, label: Text("Binaire (A op B)")),
-                ButtonSegment(value: false, label: Text("Unaire (op(A))")),
+                ButtonSegment(value: true, label: Text("Opération (+ - * /)")),
+                ButtonSegment(value: false, label: Text("Fonction (sin/cos/tan)")),
               ],
               selected: {_isBinary},
-              onSelectionChanged: (s) => setState(() => _isBinary = s.first),
+              onSelectionChanged: (s) => setState(() {
+                _isBinary = s.first;
+                _selectedNames.clear();
+              }),
             ),
             const SizedBox(height: 16),
-            DropdownButtonFormField<PerSignal>(
-              decoration: const InputDecoration(labelText: "Signal A"),
-              items: widget.availableSignals
-                  .map((s) => DropdownMenuItem(value: s, child: Text(s.name)))
-                  .toList(),
-              onChanged: (v) => setState(() => _signalA = v),
-              value: _signalA,
-            ),
-            const SizedBox(height: 16),
-            if (_isBinary) ...[
+            if (_isBinary)
               DropdownButtonFormField<String>(
                 decoration: const InputDecoration(labelText: "Opérateur"),
                 items: _binaryOps
@@ -130,18 +130,8 @@ class _VirtualSignalScreenState extends State<VirtualSignalScreen> {
                     .toList(),
                 onChanged: (v) => setState(() => _binaryOp = v!),
                 value: _binaryOp,
-              ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<PerSignal>(
-                decoration: const InputDecoration(labelText: "Signal B"),
-                items: widget.availableSignals
-                    .map(
-                        (s) => DropdownMenuItem(value: s, child: Text(s.name)))
-                    .toList(),
-                onChanged: (v) => setState(() => _signalB = v),
-                value: _signalB,
-              ),
-            ] else ...[
+              )
+            else
               DropdownButtonFormField<String>(
                 decoration: const InputDecoration(labelText: "Fonction"),
                 items: _unaryOps
@@ -150,8 +140,36 @@ class _VirtualSignalScreenState extends State<VirtualSignalScreen> {
                 onChanged: (v) => setState(() => _unaryOp = v!),
                 value: _unaryOp,
               ),
-            ],
             const SizedBox(height: 16),
+            Text(_isBinary
+                ? "Sélectionnez les signaux (au moins 2, l'opération s'applique dans l'ordre choisi) :"
+                : "Sélectionnez 1 signal :"),
+            const SizedBox(height: 8),
+            Expanded(
+              child: ListView.builder(
+                itemCount: widget.availableSignals.length,
+                itemBuilder: (context, index) {
+                  final sig = widget.availableSignals[index];
+                  final isSelected = _selectedNames.contains(sig.name);
+                  return CheckboxListTile(
+                    title: Text(sig.name, style: const TextStyle(fontSize: 13)),
+                    value: isSelected,
+                    dense: true,
+                    onChanged: (checked) {
+                      setState(() {
+                        if (checked == true) {
+                          if (!_isBinary) _selectedNames.clear();
+                          _selectedNames.add(sig.name);
+                        } else {
+                          _selectedNames.remove(sig.name);
+                        }
+                      });
+                    },
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
             TextField(
               controller: _nameController,
               decoration: const InputDecoration(
@@ -159,7 +177,7 @@ class _VirtualSignalScreenState extends State<VirtualSignalScreen> {
                 border: OutlineInputBorder(),
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
             ElevatedButton(
               onPressed: _create,
               child: const Text("Créer le signal virtuel"),

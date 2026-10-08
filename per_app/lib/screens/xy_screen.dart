@@ -1,26 +1,88 @@
 import 'package:flutter/material.dart';
 import '../per_parser/per_file_parser.dart';
+import '../utils/regression_utils.dart';
 
-class XYScreen extends StatelessWidget {
+class XYScreen extends StatefulWidget {
   final PerSignal xSignal;
   final PerSignal ySignal;
 
   const XYScreen({super.key, required this.xSignal, required this.ySignal});
 
   @override
+  State<XYScreen> createState() => _XYScreenState();
+}
+
+class _XYScreenState extends State<XYScreen> {
+  bool _showApprox = false;
+  RegressionResult? _result;
+
+  void _toggleApprox() {
+    if (!_showApprox && _result == null) {
+      final n = widget.xSignal.values.length < widget.ySignal.values.length
+          ? widget.xSignal.values.length
+          : widget.ySignal.values.length;
+      final xValues = widget.xSignal.values.sublist(0, n);
+      final yValues = widget.ySignal.values.sublist(0, n);
+      _result = RegressionUtils.polynomialFit(xValues, yValues, 1);
+    }
+    setState(() => _showApprox = !_showApprox);
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text("XY : ${ySignal.name} = f(${xSignal.name})")),
-      body: Padding(
-        padding: const EdgeInsets.all(8.0),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            return CustomPaint(
-              size: Size(constraints.maxWidth, constraints.maxHeight),
-              painter: _XYPainter(xSignal: xSignal, ySignal: ySignal),
-            );
-          },
-        ),
+      appBar: AppBar(
+        title: Text("XY : ${widget.ySignal.name} = f(${widget.xSignal.name})"),
+        actions: [
+          IconButton(
+            onPressed: _toggleApprox,
+            icon: Icon(_showApprox ? Icons.trending_up : Icons.show_chart),
+            tooltip: "Approximation affine",
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          if (_showApprox && _result != null)
+            Card(
+              color: Colors.blue.shade50,
+              margin: const EdgeInsets.all(8.0),
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(_result!.formula,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 14)),
+                    const SizedBox(height: 4),
+                    Text(
+                        "Coefficient directeur (A) = ${_result!.coefficients[1].toStringAsFixed(6)}"),
+                    Text(
+                        "Ordonnée à l'origine (B) = ${_result!.coefficients[0].toStringAsFixed(6)}"),
+                    Text("R² = ${_result!.rSquared.toStringAsFixed(6)}"),
+                  ],
+                ),
+              ),
+            ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return CustomPaint(
+                    size: Size(constraints.maxWidth, constraints.maxHeight),
+                    painter: _XYPainter(
+                      xSignal: widget.xSignal,
+                      ySignal: widget.ySignal,
+                      approx: _showApprox ? _result : null,
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -29,8 +91,13 @@ class XYScreen extends StatelessWidget {
 class _XYPainter extends CustomPainter {
   final PerSignal xSignal;
   final PerSignal ySignal;
+  final RegressionResult? approx;
 
-  _XYPainter({required this.xSignal, required this.ySignal});
+  _XYPainter({
+    required this.xSignal,
+    required this.ySignal,
+    required this.approx,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -116,6 +183,31 @@ class _XYPainter extends CustomPainter {
       ..strokeWidth = 1.5;
     canvas.drawPath(path, linePaint);
 
+    if (approx != null) {
+      final approxPath = Path();
+      final yAtMinX = approx!.evaluate(minX);
+      final yAtMaxX = approx!.evaluate(maxX);
+
+      final nx1 = 0.0;
+      final ny1 = (yAtMinX - minY) / (maxY - minY);
+      final px1 = leftMargin + nx1 * plotWidth;
+      final py1 = (8 + plotHeight - ny1 * plotHeight).clamp(8.0, 8 + plotHeight);
+
+      final nx2 = 1.0;
+      final ny2 = (yAtMaxX - minY) / (maxY - minY);
+      final px2 = leftMargin + nx2 * plotWidth;
+      final py2 = (8 + plotHeight - ny2 * plotHeight).clamp(8.0, 8 + plotHeight);
+
+      approxPath.moveTo(px1, py1);
+      approxPath.lineTo(px2, py2);
+
+      final approxPaint = Paint()
+        ..color = Colors.red
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2;
+      canvas.drawPath(approxPath, approxPaint);
+    }
+
     final axisPaint = Paint()
       ..color = Colors.black
       ..strokeWidth = 1;
@@ -126,5 +218,5 @@ class _XYPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _XYPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _XYPainter oldDelegate) => true;
 }
